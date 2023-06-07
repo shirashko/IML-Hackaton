@@ -75,9 +75,12 @@ if __name__ == '__main__':
     np.random.seed(0)
     # read the data and split it into design matrix and response vector
     df = pd.read_csv(r"C:\Users\97252\OneDrive - Yezreel Valley College\Desktop\שנה ב\IML\האקתון\Hackaton\agoda_cancellation_train.csv")
-    # ThetrainingdatasetAgoda_training.csvholds58,659recordswith38featuresdeterminedupon bookingandtheunknownvariableofinterest,
+    # The train in gdatasetAgoda_training.csvholds58,659recordswith38featuresdeterminedupon bookingandtheunknownvariableofinterest,
     # the“cancellation_datetime”whichfeaturesthedateof cancellationwhenitissuch
-    response_vector = df.price
+    train, test = train_test_split(df, test_size=0.2) # 0.2 is hyperparameter we need to decide
+    X_train, y_train = train.loc[:, train.columns != "cancellation_datetime"].values, train["cancellation_datetime"].values
+    X_test, y_test = test.loc[:,test.columns != "cancellation_datetime"].values, test["cancellation_datetime"].values
+
     """design_matrix = df.drop(columns=["price"])
 
     # split data into train and test sets
