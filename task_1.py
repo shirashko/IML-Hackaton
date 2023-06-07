@@ -71,28 +71,50 @@ def preprocess_data(X: pd.DataFrame, y: Optional[pd.Series] = None):
 
 
 
+def feature_evaluation(X: pd.DataFrame, y: pd.Series, output_path: str = ".") -> NoReturn:
+    """
+    Create scatter plot between each feature and the response.
+        - Plot title specifies feature name
+        - Plot title specifies Pearson Correlation between feature and response
+        - Plot saved under given folder with file name including feature name
+    Parameters
+    ----------
+    X : DataFrame of shape (n_samples, n_features)
+        Design matrix of regression problem
+    y : array-like of shape (n_samples, )
+        Response vector to evaluate against
+    output_path: str (default ".")
+        Path to folder in which plots are saved
+    """
+    # The covariance is a measure of how much the two vectors vary together. we divide by the std to normalize the
+    # covariance and make it a unitless measure that is independent of the scales of the two vectors. This
+    # normalization ensures that the resulting correlation coefficient will be between -1 and 1, where a value of -1
+    # indicates a perfect negative linear relationship, a value of 1 indicates a perfect positive linear relationship,
+    # and a value of 0 indicates no linear relationship.
+    std_y = np.std(y)
+    for feature in X.columns:
+        pearson_correlation = np.cov(X[feature], y)[0, 1] / (X[feature].std() * std_y)  # np.cov returns a 2X2 matrix
+        # which it's [0,1] entrance is cov(X,Y). Cov(X,Y) = Σ [ (Xi - μx) * (Yi - μy) ] / (n - 1)
+        fig = go.Figure(go.Scatter(x=X[feature], y=y, mode="markers", showlegend=False))
+        fig.update_layout(xaxis_title=f"{feature}", yaxis_title=f"price", title=f"correlation between {feature} and y -"
+                                                                                f"\nPearson Correlation = {pearson_correlation}")
+        pio.write_image(fig, rf"{output_path}\{feature}.png", format="png", engine='orca')  # the default engine doesn't
+        # work on my computer, so I loaded a suitable engine: conda install -c plotly plotly-orca
+
+
 if __name__ == '__main__':
-    np.random.seed(0)
     # read the data and split it into design matrix and response vector
-    df = pd.read_csv(r"C:\Users\97252\OneDrive - Yezreel Valley College\Desktop\שנה ב\IML\האקתון\Hackaton\agoda_cancellation_train.csv")
-    # The train in gdatasetAgoda_training.csvholds58,659recordswith38featuresdeterminedupon bookingandtheunknownvariableofinterest,
-    # the“cancellation_datetime”whichfeaturesthedateof cancellationwhenitissuch
-    train, test = train_test_split(df, test_size=0.2) # 0.2 is hyperparameter we need to decide
+    df = pd.read_csv(
+        r"C:\Users\97252\OneDrive - Yezreel Valley College\Desktop\שנה ב\IML\האקתון\Hackaton\agoda_cancellation_train.csv")
+    # The train in the file is with 58,659 records with 38 features determined upon booking and the unknown variable
+    # of interest, the “cancellation_datetime”, which features the date of cancellation when it is such
+    train, test = train_test_split(df, test_size=0.2)  # todo: 0.2 is hyperparameter we need to decide
     X_train, y_train = train.loc[:, train.columns != "cancellation_datetime"].values, train["cancellation_datetime"].values
-    X_test, y_test = test.loc[:,test.columns != "cancellation_datetime"].values, test["cancellation_datetime"].values
+    X_test, y_test = test.loc[:, test.columns != "cancellation_datetime"].values, test["cancellation_datetime"].values
 
-    """design_matrix = df.drop(columns=["price"])
-
-    # split data into train and test sets
-    train, test = train_test_split(df, test_size=0.2)
-    X_train, y_train, X_test, y_test = train.loc[:, train.columns != 'chd'].values, train["chd"].values, test.loc[:,
-                                                                                                test.columns != 'chd'].values, \
-    test["chd"].values
-
-    train_data, train_labels, test_data, test_labels = split_train_test(design_matrix, response_vector)
-    # Question 2 - Preprocessing of housing prices dataset
-    train_data, train_labels = preprocess_data(train_data, train_labels)
-    # Question 3 - Feature evaluation with respect to response
+    # Preprocessing of housing prices dataset
+    # train_data, train_labels = preprocess_data(train_x, train_y)
+    # todo: maybe we should do feature evaluation with respect to response to see which feature are important
     # feature_evaluation(train_data, train_labels)
 
     # Question 4 - Fit model over increasing percentages of the overall training data
