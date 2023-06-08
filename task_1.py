@@ -11,6 +11,7 @@ from sklearn.discriminant_analysis import LinearDiscriminantAnalysis, QuadraticD
 import matplotlib.pyplot as plt
 import numpy as np
 
+pd.options.mode.chained_assignment = None
 saved_means = None  # saves the mean value of the features in the train set for preprocess test sets
 
 def cancel_code_to_numeric(cancel_code, staying_time):
@@ -130,6 +131,21 @@ def preprocess_data(X: pd.DataFrame, y: pd.Series):
     # inserting new features that quantify durations
     data = new_duration_features(data)
 
+    codes = data["cancellation_policy_code"]
+
+    # Create a boolean mask for the rows that match the cancellation policy format
+    mask = codes.apply(check_cancellation_policy)
+
+    # Apply the cancel_code_to_numeric function to the matching rows
+    for idx in codes.loc[mask].index:
+        staying_time = int(data.loc[idx, "duration_of_stay"])
+        codes.loc[idx] = cancel_code_to_numeric(codes.loc[idx], staying_time)
+
+    # Set the non-matching rows to 0
+    codes.loc[~mask] = 0
+
+    data["cancellation_policy_code"] = codes
+
     # delete features which are not informative (for some we extracted new features from first)
     data = remove_features(data)
 
@@ -156,9 +172,9 @@ def preprocess_data(X: pd.DataFrame, y: pd.Series):
 
     if y is not None:  # train
         saved_means = pd.DataFrame(data.mean(), columns=["means"])  # save the means for the test
+        y = y.notna().astype(int)
         return data, y
     else:  # test
-        print(data.duplicated())
         data = data.reindex(columns=saved_means.index, fill_value=0)  # Make the test suitable to train data features
         return data
 
@@ -176,21 +192,6 @@ def new_duration_features(data):
     data["duration_of_stay"] = (calculate_date_difference(data["checkin_date"], data["checkout_date"])).astype(int)
     data["time_between_creation_and_purchase"] = (
         calculate_date_difference(data["hotel_live_date"], data["booking_datetime"])).astype(int)
-
-    codes = data["cancellation_policy_code"]
-
-    # Create a boolean mask for the rows that match the cancellation policy format
-    mask = codes.apply(check_cancellation_policy)
-
-    # Apply the cancel_code_to_numeric function to the matching rows
-    for idx in codes.loc[mask].index:
-        staying_time = int(data.loc[idx, "duration_of_stay"])
-        codes.loc[idx] = cancel_code_to_numeric(codes.loc[idx], staying_time)
-
-    # Set the non-matching rows to 0
-    codes.loc[~mask] = 0
-
-    data["cancellation_policy_code"] = codes
     return data
 
 
