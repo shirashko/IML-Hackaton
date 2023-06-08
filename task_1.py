@@ -257,8 +257,7 @@ if __name__ == '__main__':
     # Save the predictions to a CSV file
     predictions.to_csv('agoda_cancellation_prediction.csv', index=False)
 
-
-    #todo: delete this
+    # todo: delete this
     # Calculate F1 score
     f1 = f1_score(processed_y_val, y_pred, average='macro')
     print("F1 Score:", f1)
