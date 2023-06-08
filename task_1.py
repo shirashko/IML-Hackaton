@@ -2,6 +2,7 @@ import pandas as pd
 import re
 from sklearn import metrics
 from sklearn.decomposition import PCA
+from sklearn.ensemble import RandomForestClassifier, AdaBoostClassifier
 from sklearn.model_selection import train_test_split
 from sklearn.svm import SVC
 from sklearn.neighbors import KNeighborsClassifier
@@ -10,6 +11,7 @@ from sklearn.tree import DecisionTreeClassifier
 from sklearn.discriminant_analysis import LinearDiscriminantAnalysis, QuadraticDiscriminantAnalysis
 import matplotlib.pyplot as plt
 import numpy as np
+from sklearn.model_selection import cross_val_score
 
 pd.options.mode.chained_assignment = None
 saved_means = None  # saves the mean value of the features in the train set for preprocess test sets
@@ -25,7 +27,6 @@ def cancel_code_to_numeric(cancel_code, staying_time):
 
     Returns:
         float: The numeric value representing the customer-friendliness of the cancellation policy.
-
     """
     segments = str(cancel_code).split('_')
     total_value = 0
@@ -113,7 +114,7 @@ def calculate_date_difference(vector1, vector2):
     return abs(difference)
 
 
-def preprocess_data(X: pd.DataFrame, y: pd.Series):
+def preprocess_data(X: pd.DataFrame, y: pd.Series = None):
     """
     preprocess data (train & test)
     Parameters
@@ -142,7 +143,7 @@ def preprocess_data(X: pd.DataFrame, y: pd.Series):
     # convert from boolean to integer 0, 1
     data = convert_boolean_features_to_int(data)
 
-    dummy_variables = ["original_payment_method", "original_payment_type", "accommadation_type_name", "charge_option"]
+    dummy_variables = ["original_payment_type", "charge_option", "checkin_day", "checkin_month"]
 
     # Handling missing values
     if y is not None:  # train
@@ -170,6 +171,15 @@ def convert_boolean_features_to_int(data):
     data[["is_user_logged_in", "is_first_booking"]] = data[["is_user_logged_in", "is_first_booking"]].astype(int)
     return data
 
+def extract_day_and_month(series):
+    # Convert the series to datetime if not already in datetime format
+    series = pd.to_datetime(series)
+
+    # Extract the day of the week and month
+    days_of_week = series.dt.day_name()
+    months = series.dt.month_name()
+
+    return days_of_week, months
 
 def process_cancellation_policy_code(data):
     # process cancellation_policy_code feature
@@ -189,8 +199,9 @@ def process_cancellation_policy_code(data):
 def remove_features(data):
     data = data.drop(["h_booking_id", "h_customer_id", "language", "hotel_id", "hotel_brand_code", "hotel_country_code",
                       "origin_country_code", "checkin_date", "checkout_date", "booking_datetime",
-                      "hotel_live_date", "guest_nationality_country_name",     'hotel_area_code', 'hotel_chain_code',
-                      "original_payment_currency", "customer_nationality", 'hotel_city_code'], axis=1)
+                      "hotel_live_date", "guest_nationality_country_name", 'hotel_area_code', 'hotel_chain_code',
+                      "original_payment_currency", "customer_nationality", 'hotel_city_code', "original_selling_amount",
+                      "no_of_extra_bed"], axis=1)
     return data
 
 
@@ -200,6 +211,9 @@ def new_duration_features(data):
     data["duration_of_stay"] = (calculate_date_difference(data["checkin_date"], data["checkout_date"])).astype(int)
     data["time_between_creation_and_purchase"] = (
         calculate_date_difference(data["hotel_live_date"], data["booking_datetime"])).astype(int)
+    data["original_payment_method"] = np.where(data["original_payment_method"] == 'UNKNOWN', 1, 0)
+    data["accommadation_type_name"] = np.where(data["original_payment_method"].isin(['Hotel', 'Apartment']), 1, 0)
+    data["checkin_day"], data["checkin_month"] = extract_day_and_month(data["checkin_date"])
     return data
 
 
@@ -221,7 +235,7 @@ def preprocess_data_sets():
     global y_train_processed, y_val_processed
     # Preprocess the data
     x_train_processed, y_train_processed = preprocess_data(x_train, y_train)
-    x_val_processed = preprocess_data(x_val, None)
+    x_val_processed = preprocess_data(x_val)
     y_val_processed = y_val.notna().astype(
         int)  # make response vector with 1 where there was a cancellation, 0 otherwise
     return x_train_processed, y_train_processed, x_val_processed, y_val_processed
@@ -241,8 +255,10 @@ if __name__ == '__main__':
         LogisticRegression(),
         KNeighborsClassifier(),
         DecisionTreeClassifier(),
+        RandomForestClassifier(),
         LinearDiscriminantAnalysis(),
-        QuadraticDiscriminantAnalysis()
+        QuadraticDiscriminantAnalysis(),
+        AdaBoostClassifier()
     ]
 
     # Initialize lists to store performance metrics
@@ -251,28 +267,14 @@ if __name__ == '__main__':
     recall_scores = []
     f1_scores = []
 
-    # Train and evaluate each classifier
+    # Perform cross-validation for each classifier
     for classifier in classifiers:
-        # Train the classifier
-        print('fit')
-        classifier.fit(processed_x_train, processed_y_train)
-
-        # Predict on the validation set
-        print('predict')
-        y_val_pred = classifier.predict(processed_x_val)
-
-        # Evaluate the classifier
-        print('metric')
-        accuracy = metrics.accuracy_score(processed_y_val, y_val_pred)
-        precision = metrics.precision_score(processed_y_val, y_val_pred, average='macro')
-        recall = metrics.recall_score(processed_y_val, y_val_pred, average='macro')
-        f1 = metrics.f1_score(processed_y_val, y_val_pred, average='macro')
+        # Perform cross-validation
+        scores = cross_val_score(classifier, processed_x_train, processed_y_train, cv=5, scoring='f1_macro')
 
         # Store the performance metrics
-        accuracy_scores.append(accuracy)
-        precision_scores.append(precision)
-        recall_scores.append(recall)
-        f1_scores.append(f1)
+        accuracy_scores.append(scores.mean())
+        f1_scores.append(scores.mean())
 
     # Create a bar plot to visualize the performance metrics
     x = np.arange(len(classifiers))
@@ -280,8 +282,6 @@ if __name__ == '__main__':
 
     fig, ax = plt.subplots()
     rects1 = ax.bar(x, accuracy_scores, width, label='Accuracy')
-    rects2 = ax.bar(x + width, precision_scores, width, label='Precision')
-    rects3 = ax.bar(x + 2 * width, recall_scores, width, label='Recall')
     rects4 = ax.bar(x + 3 * width, f1_scores, width, label='F1 Score')
 
     ax.set_ylabel('Scores')
@@ -293,24 +293,7 @@ if __name__ == '__main__':
     plt.tight_layout()
     plt.show()
 
-    # Choose the best performing classifier and train it on the full training set
     best_classifier = classifiers[
         np.argmax(f1_scores)]  # Replace with the classifier that performs the best based on your evaluation
     best_classifier.fit(processed_x_train, processed_y_train)
-
-    # Predict on the test set
-    y_test_pred = best_classifier.predict(processed_x_val)
-
-    # Evaluate the best classifier on the test set
-    accuracy = metrics.accuracy_score(y_test, y_test_pred)
-    precision = metrics.precision_score(y_test, y_test_pred, average='macro')
-    recall = metrics.recall_score(y_test, y_test_pred, average='macro')
-    f1_score = metrics.f1_score(y_test, y_test_pred, average='macro')
-
-    # Print the evaluation metrics for the best classifier on the test set
-    print("Evaluation Metrics on Test Set")
-    print(f"Classifier: {best_classifier.__class__.__name__}")
-    print(f"Accuracy: {accuracy}")
-    print(f"Precision: {precision}")
-    print(f"Recall: {recall}")
-    print(f"F1 Score: {f1_score}")
+    print(metrics.f1_score(processed_y_val, best_classifier.predict(processed_x_val), average='macro'))
