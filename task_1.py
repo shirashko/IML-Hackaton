@@ -254,9 +254,11 @@ if __name__ == '__main__':
     # Create a DataFrame with the booking IDs and predicted cancellations
     predictions = pd.DataFrame({'ID': x_val['h_booking_id'], 'cancellation': y_pred})
 
+    # Save the predictions to a CSV file
+    predictions.to_csv('agoda_cancellation_prediction.csv', index=False)
+
+
+    #todo: delete this
     # Calculate F1 score
     f1 = f1_score(processed_y_val, y_pred, average='macro')
     print("F1 Score:", f1)
-
-    # Save the predictions to a CSV file
-    predictions.to_csv('agoda_cancellation_prediction.csv', index=False)
