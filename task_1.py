@@ -1,13 +1,23 @@
 from typing import NoReturn
-
-import numpy as np
 import pandas as pd
 from sklearn.model_selection import train_test_split
 import plotly.graph_objects as go
 import plotly.express as px
 import plotly.io as pio
 import re
+from sklearn import metrics
+from sklearn.model_selection import train_test_split
+from sklearn.svm import SVC
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.linear_model import LogisticRegression
+from sklearn.tree import DecisionTreeClassifier
+from sklearn.preprocessing import PolynomialFeatures
+from sklearn.discriminant_analysis import LinearDiscriminantAnalysis, QuadraticDiscriminantAnalysis
+import matplotlib.pyplot as plt
+import numpy as np
 
+
+saved_data = {}  # saves the names and the mean value of the features in the train set for preprocess test sets
 
 def cancel_code_to_numeric(cancel_code, staying_time):
     """
@@ -104,41 +114,6 @@ def calculate_date_difference(vector1, vector2):
     difference = (datetime2 - datetime1).dt.days
     return abs(difference)
 
-def feature_evaluation(X: pd.DataFrame, y: pd.Series, output_path: str = ".") -> NoReturn:
-    """
-    Create scatter plot between each feature and the response.
-        - Plot title specifies feature name
-        - Plot title specifies Pearson Correlation between feature and response
-        - Plot saved under given folder with file name including feature name
-    Parameters
-    ----------
-    X : DataFrame of shape (n_samples, n_features)
-        Design matrix of regression problem
-    y : array-like of shape (n_samples, )
-        Response vector to evaluate against
-    output_path: str (default ".")
-        Path to folder in which plots are saved
-    """
-    # The covariance is a measure of how much the two vectors vary together. we divide by the std to normalize the
-    # covariance and make it a unitless measure that is independent of the scales of the two vectors. This
-    # normalization ensures that the resulting correlation coefficient will be between -1 and 1, where a value of -1
-    # indicates a perfect negative linear relationship, a value of 1 indicates a perfect positive linear relationship,
-    # and a value of 0 indicates no linear relationship.
-    std_y = np.std(y)
-    for feature in X.columns:
-        pearson_correlation = np.cov(X[feature], y)[0, 1] / (
-                    X[feature].std() * std_y)  # np.cov returns a 2X2 matrix
-        # which it's [0,1] entrance is cov(X,Y). Cov(X,Y) = Σ [ (Xi - μx) * (Yi - μy) ] / (n - 1)
-        fig = go.Figure(go.Scatter(x=X[feature], y=y, mode="markers", showlegend=False))
-        fig.update_layout(xaxis_title=f"{feature}", yaxis_title=f"cancellation_datetime",
-                          title=f"correlation between {feature} and y -"
-                                f"\nPearson Correlation = {pearson_correlation}")
-        fig.show()
-        #pio.write_image(fig, rf"{output_path}\{feature}.png", format="png",
-        #                engine='orca')  # the default engine doesn't
-        # work on my computer, so I loaded a suitable engine: conda install -c plotly plotly-orca
-
-
 def preprocess_data(X: pd.DataFrame, y: pd.Series):
     """
     preprocess data (train & test)
@@ -153,6 +128,7 @@ def preprocess_data(X: pd.DataFrame, y: pd.Series):
     Post-processed design matrix and response vector (prices) - either as a single
     DataFrame or a Tuple[DataFrame, Series]
     """
+    global saved_data # to save the mean values of each feature in the train
     # Replace None values with the mean of the column
     if y is not None:  # we are in train
         # Notice that we don't need to remove samples with none in the response vector, because none means there wasn't
@@ -167,12 +143,21 @@ def preprocess_data(X: pd.DataFrame, y: pd.Series):
                         "original_payment_currency", "customer_nationality", "accommadation_type_name",
                         "guest_nationality_country_name"]
 
-    "hotel_id"
+    if y is not None:  # we are in train
+        # Fill missing values with the mean of each column
+        for feature in data.drop(["cancellation_datetime"], axis=1):  # need to do this on data.drop[all features we don't \ can't fill with the mean value]
+            data[feature].fillna(data[feature].mean())
+    else:
+        # For every missing value (null), substitute it with the mean value of the feature in the training set.
+        for feature in data:
+            data[feature].fillna(value=saved_data["means"][feature], inplace=True)
+
+            
     # todo: hotel_area_code, hotel_city_code, hotl_country_name are "on the same category". reminder: hotel_country_code = name
     # todo: hotel_brand_code, hotel_chain_code are "on the same category"
     # remove hotel_id because there is too much, and we have the hotl_chain_code which is informative for this data
-
-    data = pd.get_dummies(data, columns=dummie_variables, prefix="dummy ")
+    data = pd.get_dummies(data, columns=dummie_variables, prefix="dummy ", dtype=int)
+    #todo it's not working. check it's ok I converted into int
 
     # delete features which are not informative
     data = data.drop(["h_booking_id", "h_customer_id", "language", "hotel_id", "hotel_brand_code", "hotel_country_code",
@@ -198,14 +183,15 @@ def preprocess_data(X: pd.DataFrame, y: pd.Series):
     #                 cancel_code_to_numeric(data["cancellation_policy_code"], data["duration_of_stay"]), 0)
     data = data.drop(["cancellation_policy_code"], axis=1)
 
-    # Fill missing values with the mean of each column
-    for feature in data.drop(["cancellation_datetime"], axis=1):  # need to do this on data.drop[all features we don't \ can't fill with the mean value]
-        data[feature].fillna(data[feature].mean())
 
     if y is not None:  # we are in train
-        return data.drop(columns=["cancellation_datetime"]), data["cancellation_datetime"]
+        cancellation_datetime = data["cancellation_datetime"]
+        data = data.drop(columns=["cancellation_datetime"])
+        non_numeric_features = data.select_dtypes(exclude=[np.number]).columns.tolist()
+        saved_data["means"] = data.mean()
+        return data, cancellation_datetime
     else:  # we are in test
-        data = data.reindex(columns=train.columns, fill_value=0)  # make the dummy columns in test to be
+        data = data.reindex(columns=saved_data["means"].index, fill_value=0)  # make the dummy columns in test to be
         # suitable to the train data, and also drop columns which is in test and not in train (id, date...)
         return data
 
@@ -217,4 +203,87 @@ if __name__ == '__main__':
     train, test = train_test_split(df, test_size=0.2)
     X_train, y_train = train.loc[:, train.columns != "cancellation_datetime"], train["cancellation_datetime"]
     X_test, y_test = test.loc[:, test.columns != "cancellation_datetime"], test["cancellation_datetime"]
-    preprocess_data(X_train, y_train)
+
+    # Preprocess the data
+    X_train_processed, y_train_processed = preprocess_data(X_train, y_train)
+    X_test_processed = preprocess_data(X_test, None)
+
+    # Split the preprocessed data into training and validation sets
+    X_train_processed, X_val_processed, y_train_processed, y_val_processed = train_test_split(X_train_processed, y_train_processed, test_size=0.2)
+
+    # Initialize the classifiers
+    classifiers = [
+        SVC(),
+        LogisticRegression(),
+        KNeighborsClassifier(),
+        DecisionTreeClassifier(),
+        LinearDiscriminantAnalysis(),
+        QuadraticDiscriminantAnalysis()
+    ]
+
+    # Initialize lists to store performance metrics
+    accuracy_scores = []
+    precision_scores = []
+    recall_scores = []
+    f1_scores = []
+
+    # Train and evaluate each classifier
+    for classifier in classifiers:
+        # Train the classifier
+        classifier.fit(X_train_processed, y_train_processed)
+
+        # Predict on the validation set
+        y_val_pred = classifier.predict(X_val_processed)
+
+        # Evaluate the classifier
+        accuracy = metrics.accuracy_score(y_val_processed, y_val_pred)
+        precision = metrics.precision_score(y_val_processed, y_val_pred, average='macro')
+        recall = metrics.recall_score(y_val_processed, y_val_pred, average='macro')
+        f1 = metrics.f1_score(y_val_processed, y_val_pred, average='macro')
+
+        # Store the performance metrics
+        accuracy_scores.append(accuracy)
+        precision_scores.append(precision)
+        recall_scores.append(recall)
+        f1_scores.append(f1)
+
+    # Create a bar plot to visualize the performance metrics
+    x = np.arange(len(classifiers))
+    width = 0.2
+
+    fig, ax = plt.subplots()
+    rects1 = ax.bar(x, accuracy_scores, width, label='Accuracy')
+    rects2 = ax.bar(x + width, precision_scores, width, label='Precision')
+    rects3 = ax.bar(x + 2 * width, recall_scores, width, label='Recall')
+    rects4 = ax.bar(x + 3 * width, f1_scores, width, label='F1 Score')
+
+    ax.set_ylabel('Scores')
+    ax.set_title('Performance Metrics of Classifiers')
+    ax.set_xticks(x + 1.5 * width)
+    ax.set_xticklabels([classifier.__class__.__name__ for classifier in classifiers], rotation=45)
+    ax.legend()
+
+    plt.tight_layout()
+    plt.show()
+
+    # Choose the best performing classifier and train it on the full training set
+    best_classifier = classifiers[
+        np.argmax(f1_scores)]  # Replace with the classifier that performs the best based on your evaluation
+    best_classifier.fit(X_train_processed, y_train_processed)
+
+    # Predict on the test set
+    y_test_pred = best_classifier.predict(X_test_processed)
+
+    # Evaluate the best classifier on the test set
+    accuracy = metrics.accuracy_score(y_test, y_test_pred)
+    precision = metrics.precision_score(y_test, y_test_pred, average='macro')
+    recall = metrics.recall_score(y_test, y_test_pred, average='macro')
+    f1_score = metrics.f1_score(y_test, y_test_pred, average='macro')
+
+    # Print the evaluation metrics for the best classifier on the test set
+    print("Evaluation Metrics on Test Set")
+    print(f"Classifier: {best_classifier.__class__.__name__}")
+    print(f"Accuracy: {accuracy}")
+    print(f"Precision: {precision}")
+    print(f"Recall: {recall}")
+    print(f"F1 Score: {f1_score}")
