@@ -1,18 +1,19 @@
 import pandas as pd
 import re
 from sklearn import metrics
+from sklearn.decomposition import PCA
 from sklearn.model_selection import train_test_split
 from sklearn.svm import SVC
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.tree import DecisionTreeClassifier
-from sklearn.preprocessing import PolynomialFeatures
 from sklearn.discriminant_analysis import LinearDiscriminantAnalysis, QuadraticDiscriminantAnalysis
 import matplotlib.pyplot as plt
 import numpy as np
 
 pd.options.mode.chained_assignment = None
 saved_means = None  # saves the mean value of the features in the train set for preprocess test sets
+
 
 def cancel_code_to_numeric(cancel_code, staying_time):
     """
@@ -33,11 +34,11 @@ def cancel_code_to_numeric(cancel_code, staying_time):
             days_next = 0
         else:
             days_next = int(segments[seg + 1][:segments[seg + 1].find('D')])
-        total_value -= cancelation_segment_to_numeric(segments[seg], staying_time, days_next)
+        total_value -= cancellation_segment_to_numeric(segments[seg], staying_time, days_next)
     return total_value
 
 
-def cancelation_segment_to_numeric(segment, staying_time, days_next):
+def cancellation_segment_to_numeric(segment, staying_time, days_next):
     """
     Converts a cancellation policy segment to a numeric value based on the staying time and days before check-in.
 
@@ -80,6 +81,7 @@ def check_cancellation_policy(code):
     code = str(code)
     pattern = r'^(\d+D\d+[PN])(\d+D\d+[PN])*(\d+D\d+[PN])?(_\d+P)?$'
     return re.match(pattern, code) is not None
+
 
 def calculate_date_difference(vector1, vector2):
     """
@@ -153,8 +155,7 @@ def preprocess_data(X: pd.DataFrame, y: pd.Series):
     data[["is_user_logged_in", "is_first_booking"]] = data[["is_user_logged_in", "is_first_booking"]].astype(int)
 
     dummy_variables = ['hotel_area_code', 'hotel_chain_code', "original_payment_method", "original_payment_type",
-                       "original_payment_currency", "customer_nationality", "accommadation_type_name",
-                       "guest_nationality_country_name", "charge_option"]
+                       "original_payment_currency", "customer_nationality", "accommadation_type_name", "charge_option"]
 
     # Handling missing values
     if y is not None:  # train
@@ -165,7 +166,6 @@ def preprocess_data(X: pd.DataFrame, y: pd.Series):
         # For every missing value (null), substitute it with the mean value of the feature in the training set
         for feature in data.drop(dummy_variables, axis=1).columns:
             data[feature].fillna(value=saved_means.loc[feature, "means"], inplace=True)
-
 
     # handling categorical variables
     data = pd.get_dummies(data, columns=dummy_variables, prefix=dummy_variables, dtype=int)
@@ -182,7 +182,7 @@ def preprocess_data(X: pd.DataFrame, y: pd.Series):
 def remove_features(data):
     data = data.drop(["h_booking_id", "h_customer_id", "language", "hotel_id", "hotel_brand_code", "hotel_country_code",
                       "hotel_city_code", "origin_country_code", "checkin_date", "checkout_date", "booking_datetime",
-                      "hotel_live_date"], axis=1)
+                      "hotel_live_date", "guest_nationality_country_name"], axis=1)
     return data
 
 
@@ -195,26 +195,41 @@ def new_duration_features(data):
     return data
 
 
+def create_train_validation_test_sets():
+    train, test = train_test_split(df, test_size=0.2)
+
+    train, validation = train_test_split(train, test_size=0.2)
+
+    x_train, y_train = train.loc[:, train.columns != "cancellation_datetime"], train["cancellation_datetime"]
+
+    x_val, y_val = validation.loc[:, validation.columns != "cancellation_datetime"], validation["cancellation_datetime"]
+
+    x_test, y_test = test.loc[:, test.columns != "cancellation_datetime"], test["cancellation_datetime"]
+
+    return x_train, y_train, x_val, y_val, x_test, y_test
+
+
+def preprocess_data_sets():
+    global y_train_processed, y_val_processed
+    # Preprocess the data
+    x_train_processed, y_train_processed = preprocess_data(x_train, y_train)
+    x_val_processed = preprocess_data(x_val, None)
+    y_val_processed = y_val.notna().astype(
+        int)  # make response vector with 1 where there was a cancellation, 0 otherwise
+    return x_train_processed, y_train_processed, x_val_processed, y_val_processed,
+
+
 if __name__ == '__main__':
     # read the data and split it into design matrix and response vector
     df = pd.read_csv(
         r"C:\Users\97252\OneDrive - Yezreel Valley College\Desktop\שנה ב\IML\האקתון\Hackaton\agoda_cancellation_train.csv")
-    train, test = train_test_split(df, test_size=0.2)
-    X_train, y_train = train.loc[:, train.columns != "cancellation_datetime"], train["cancellation_datetime"]
-    X_test, y_test = test.loc[:, test.columns != "cancellation_datetime"], test["cancellation_datetime"]
 
-    # Preprocess the data
-    X_train_processed, y_train_processed = preprocess_data(X_train, y_train)
-    X_test_processed = preprocess_data(X_test, None)
+    x_train, y_train, x_val, y_val, x_test, y_test = create_train_validation_test_sets()
 
-    # Split the preprocessed data into training and validation sets
-    X_train_processed, X_val_processed, y_train_processed, y_val_processed = train_test_split(X_train_processed,
-                                                                                              y_train_processed,
-                                                                                              test_size=0.2)
+    processed_x_train, processed_y_train, processed_x_val, processed_y_val = preprocess_data_sets()  # todo add preprocess of test set
 
     # Initialize the classifiers
     classifiers = [
-        SVC(),
         LogisticRegression(),
         KNeighborsClassifier(),
         DecisionTreeClassifier(),
@@ -231,16 +246,19 @@ if __name__ == '__main__':
     # Train and evaluate each classifier
     for classifier in classifiers:
         # Train the classifier
-        classifier.fit(X_train_processed, y_train_processed)
+        print('fit')
+        classifier.fit(processed_x_train, processed_y_train)
 
         # Predict on the validation set
-        y_val_pred = classifier.predict(X_val_processed)
+        print('predict')
+        y_val_pred = classifier.predict(processed_x_val)
 
         # Evaluate the classifier
-        accuracy = metrics.accuracy_score(y_val_processed, y_val_pred)
-        precision = metrics.precision_score(y_val_processed, y_val_pred, average='macro')
-        recall = metrics.recall_score(y_val_processed, y_val_pred, average='macro')
-        f1 = metrics.f1_score(y_val_processed, y_val_pred, average='macro')
+        print('metric')
+        accuracy = metrics.accuracy_score(processed_y_val, y_val_pred)
+        precision = metrics.precision_score(processed_y_val, y_val_pred, average='macro')
+        recall = metrics.recall_score(processed_y_val, y_val_pred, average='macro')
+        f1 = metrics.f1_score(processed_y_val, y_val_pred, average='macro')
 
         # Store the performance metrics
         accuracy_scores.append(accuracy)
@@ -270,10 +288,10 @@ if __name__ == '__main__':
     # Choose the best performing classifier and train it on the full training set
     best_classifier = classifiers[
         np.argmax(f1_scores)]  # Replace with the classifier that performs the best based on your evaluation
-    best_classifier.fit(X_train_processed, y_train_processed)
+    best_classifier.fit(processed_x_train, processed_y_train)
 
     # Predict on the test set
-    y_test_pred = best_classifier.predict(X_test_processed)
+    y_test_pred = best_classifier.predict(processed_x_val)
 
     # Evaluate the best classifier on the test set
     accuracy = metrics.accuracy_score(y_test, y_test_pred)
@@ -288,21 +306,3 @@ if __name__ == '__main__':
     print(f"Precision: {precision}")
     print(f"Recall: {recall}")
     print(f"F1 Score: {f1_score}")
-
-# Notice that we don't need to remove samples with none in the response vector, because none means there wasn't
-# a cancellation
-
-"""    if y is not None:  # we are in train
-        data = pd.concat([X, y], axis=1) # Concatenate the modified X and y back into a DataFrame
-    else:
-        data = X"""
-# todo: hotel_area_code, hotel_city_code, hotl_country_name are "on the same category". reminder: hotel_country_code = name
-# todo: hotel_brand_code, hotel_chain_code are "on the same category"
-# remove hotel_id because there is too much, and we have the hotl_chain_code which is informative for this data
-# todo: to create a new feature from the origin_country_code, for examples 1 if the origin... == passport blabla
-# todo: in the train, the date columns arn't None, but in the test it could be so it will be good to handle this case
-
-# data = np.where(check_cancellation_policy(data["cancellation_policy_code"]) == True,
-#                 cancel_code_to_numeric(data["cancellation_policy_code"], data["duration_of_stay"]), 0)
-
-# todo drop_duplicates in train?
