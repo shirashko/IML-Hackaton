@@ -1,19 +1,12 @@
 import pandas as pd
 import re
-from sklearn import metrics
-from sklearn.decomposition import PCA
-from sklearn.ensemble import RandomForestClassifier, AdaBoostClassifier
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import f1_score
 from sklearn.model_selection import train_test_split
-from sklearn.svm import SVC
-from sklearn.neighbors import KNeighborsClassifier
-from sklearn.linear_model import LogisticRegression
-from sklearn.tree import DecisionTreeClassifier
-from sklearn.discriminant_analysis import LinearDiscriminantAnalysis, QuadraticDiscriminantAnalysis
-import matplotlib.pyplot as plt
 import numpy as np
-from sklearn.model_selection import cross_val_score
 
 pd.options.mode.chained_assignment = None
+
 saved_means = None  # saves the mean value of the features in the train set for preprocess test sets
 
 
@@ -171,6 +164,7 @@ def convert_boolean_features_to_int(data):
     data[["is_user_logged_in", "is_first_booking"]] = data[["is_user_logged_in", "is_first_booking"]].astype(int)
     return data
 
+
 def extract_day_and_month(series):
     # Convert the series to datetime if not already in datetime format
     series = pd.to_datetime(series)
@@ -180,6 +174,7 @@ def extract_day_and_month(series):
     months = series.dt.month_name()
 
     return days_of_week, months
+
 
 def process_cancellation_policy_code(data):
     # process cancellation_policy_code feature
@@ -242,58 +237,26 @@ def preprocess_data_sets():
 
 
 if __name__ == '__main__':
-    # read the data and split it into design matrix and response vector
-    df = pd.read_csv(
-        r"C:\Users\97252\OneDrive - Yezreel Valley College\Desktop\שנה ב\IML\האקתון\Hackaton\agoda_cancellation_train.csv")
+    # Read the data
+    df = pd.read_csv("agoda_cancellation_train.csv")
 
+    # Preprocess the data & split it into design matrix and response vector for train, validation, test
     x_train, y_train, x_val, y_val, x_test, y_test = create_train_validation_test_sets()
+    processed_x_train, processed_y_train, processed_x_val, processed_y_val = preprocess_data_sets()
 
-    processed_x_train, processed_y_train, processed_x_val, processed_y_val = preprocess_data_sets()  # todo add preprocess of test set
+    # Initialize and train the Random Forest classifier
+    clf = RandomForestClassifier()
+    clf.fit(processed_x_train, processed_y_train)
 
-    # Initialize the classifiers
-    classifiers = [
-        LogisticRegression(),
-        KNeighborsClassifier(),
-        DecisionTreeClassifier(),
-        RandomForestClassifier(),
-        LinearDiscriminantAnalysis(),
-        QuadraticDiscriminantAnalysis(),
-        AdaBoostClassifier()
-    ]
+    # Make predictions on the validation set
+    y_pred = clf.predict(processed_x_val)
 
-    # Initialize lists to store performance metrics
-    accuracy_scores = []
-    precision_scores = []
-    recall_scores = []
-    f1_scores = []
+    # Create a DataFrame with the booking IDs and predicted cancellations
+    predictions = pd.DataFrame({'ID': x_val['h_booking_id'], 'cancellation': y_pred})
 
-    # Perform cross-validation for each classifier
-    for classifier in classifiers:
-        # Perform cross-validation
-        scores = cross_val_score(classifier, processed_x_train, processed_y_train, cv=5, scoring='f1_macro')
+    # Calculate F1 score
+    f1 = f1_score(processed_y_val, y_pred, average='macro')
+    print("F1 Score:", f1)
 
-        # Store the performance metrics
-        accuracy_scores.append(scores.mean())
-        f1_scores.append(scores.mean())
-
-    # Create a bar plot to visualize the performance metrics
-    x = np.arange(len(classifiers))
-    width = 0.2
-
-    fig, ax = plt.subplots()
-    rects1 = ax.bar(x, accuracy_scores, width, label='Accuracy')
-    rects4 = ax.bar(x + 3 * width, f1_scores, width, label='F1 Score')
-
-    ax.set_ylabel('Scores')
-    ax.set_title('Performance Metrics of Classifiers')
-    ax.set_xticks(x + 1.5 * width)
-    ax.set_xticklabels([classifier.__class__.__name__ for classifier in classifiers], rotation=45)
-    ax.legend()
-
-    plt.tight_layout()
-    plt.show()
-
-    best_classifier = classifiers[
-        np.argmax(f1_scores)]  # Replace with the classifier that performs the best based on your evaluation
-    best_classifier.fit(processed_x_train, processed_y_train)
-    print(metrics.f1_score(processed_y_val, best_classifier.predict(processed_x_val), average='macro'))
+    # Save the predictions to a CSV file
+    predictions.to_csv('agoda_cancellation_prediction.csv', index=False)
