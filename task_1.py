@@ -1,6 +1,4 @@
-from typing import NoReturn
 import pandas as pd
-from sklearn.model_selection import train_test_split
 import re
 from sklearn import metrics
 from sklearn.model_selection import train_test_split
@@ -13,8 +11,74 @@ from sklearn.discriminant_analysis import LinearDiscriminantAnalysis, QuadraticD
 import matplotlib.pyplot as plt
 import numpy as np
 
-saved_data = {}  # saves the names and the mean value of the features in the train set for preprocess test sets
+saved_means = None  # saves the mean value of the features in the train set for preprocess test sets
 
+def cancel_code_to_numeric(cancel_code, staying_time):
+    """
+    Converts a cancellation code to a numeric value representing the customer-friendliness of the cancellation policy.
+
+    Args:
+        cancel_code (str): The cancellation code to be converted.
+        staying_time (int): The number of nights the customer has booked to stay.
+
+    Returns:
+        float: The numeric value representing the customer-friendliness of the cancellation policy.
+
+    """
+    segments = str(cancel_code).split('_')
+    total_value = 0
+    for seg in range(len(segments)):
+        if seg == len(segments) - 1 or 'N' in segments[seg]:
+            days_next = 0
+        else:
+            days_next = int(segments[seg + 1][:segments[seg + 1].find('D')])
+        total_value -= cancelation_segment_to_numeric(segments[seg], staying_time, days_next)
+    return total_value
+
+
+def cancelation_segment_to_numeric(segment, staying_time, days_next):
+    """
+    Converts a cancellation policy segment to a numeric value based on the staying time and days before check-in.
+
+    Args:
+        segment (str): The cancellation policy segment to be converted.
+        staying_time (int): The number of nights the customer has booked to stay.
+        days_next (int): The number of days before check-in for the next segment.
+
+    Returns:
+        float: The numeric value representing the customer-friendliness of the cancellation policy segment.
+
+    """
+    D_index = segment.find('D')
+    days_before_checkin = int(segment[:D_index])
+    days_current = days_before_checkin - days_next
+    if 'D' in segment:
+        if 'P' in segment:
+            P_index = segment.find('P')
+            sum_precentage = int(segment[D_index + 1: P_index]) / 100
+        else:
+            N_index = segment.find('N')
+            sum_precentage = int(segment[D_index + 1: N_index]) / staying_time
+    else:
+        P_index = segment.find('P')
+        return int(segment[:P_index]) / 100
+    return sum_precentage * days_current
+
+
+def check_cancellation_policy(code):
+    """
+    Checks if a given cancellation code matches the defined cancellation policy format.
+
+    Args:
+        code (str): The cancellation code to be checked.
+
+    Returns:
+        bool: True if the cancellation code matches the defined format, False otherwise.
+
+    """
+    code = str(code)
+    pattern = r'^(\d+D\d+[PN])(\d+D\d+[PN])*(\d+D\d+[PN])?(_\d+P)?$'
+    return re.match(pattern, code) is not None
 
 def calculate_date_difference(vector1, vector2):
     """
@@ -35,7 +99,7 @@ def calculate_date_difference(vector1, vector2):
 
         Notes
         -----
-        The date strings in vector1 and vector2 should be in the format "%d/%m/%Y %H:%M:%S".
+        The date strings in vector1 and vector2 should be in the format "%Y-%m-%d %H:%M:%S".
         The function uses pandas.to_datetime() to convert the date strings to datetime objects,
         and then calculates the absolute difference in days using vectorized operations.
         """
@@ -60,7 +124,7 @@ def preprocess_data(X: pd.DataFrame, y: pd.Series):
     Post-processed design matrix and response vector (prices) - either as a single
     DataFrame or a Tuple[DataFrame, Series]
     """
-    global saved_data  # to save the mean values of each feature in the train
+    global saved_means  # to save the mean values of each feature in the train
     data = X
 
     # inserting new features that quantify durations
@@ -68,7 +132,6 @@ def preprocess_data(X: pd.DataFrame, y: pd.Series):
 
     # delete features which are not informative (for some we extracted new features from first)
     data = remove_features(data)
-    data = data.drop(["cancellation_policy_code"], axis=1)  # removing temporarily until ori finish
 
     # convert from boolean to integer 0, 1
     data[["is_user_logged_in", "is_first_booking"]] = data[["is_user_logged_in", "is_first_booking"]].astype(int)
@@ -80,23 +143,23 @@ def preprocess_data(X: pd.DataFrame, y: pd.Series):
     # Handling missing values
     if y is not None:  # train
         # Fill missing values for each feature in the test with the mean value in the training set
-        for feature in data.drop(dummy_variables, axis=1):
-            data[feature].fillna(data[feature].mean())
+        for feature in data.drop(dummy_variables, axis=1).columns:
+            data[feature] = data[feature].fillna(data[feature].mean())
     else:  # test
         # For every missing value (null), substitute it with the mean value of the feature in the training set
-        for feature in data.drop(dummy_variables, axis=1):
-            data[feature].fillna(value=saved_data["means"][feature], inplace=True)
+        for feature in data.drop(dummy_variables, axis=1).columns:
+            data[feature].fillna(value=saved_means.loc[feature, "means"], inplace=True)
+
 
     # handling categorical variables
-    data = pd.get_dummies(data, columns=dummy_variables, prefix="dummy ", dtype=int)
+    data = pd.get_dummies(data, columns=dummy_variables, prefix=dummy_variables, dtype=int)
 
     if y is not None:  # train
-        saved_data["means"] = data.mean()  # save the means for the test
+        saved_means = pd.DataFrame(data.mean(), columns=["means"])  # save the means for the test
         return data, y
     else:  # test
         print(data.duplicated())
-        data = data.reindex(columns=saved_data["means"].index,
-                            fill_value=0)  # Make the test suitable to train data features
+        data = data.reindex(columns=saved_means.index, fill_value=0)  # Make the test suitable to train data features
         return data
 
 
@@ -113,6 +176,21 @@ def new_duration_features(data):
     data["duration_of_stay"] = (calculate_date_difference(data["checkin_date"], data["checkout_date"])).astype(int)
     data["time_between_creation_and_purchase"] = (
         calculate_date_difference(data["hotel_live_date"], data["booking_datetime"])).astype(int)
+
+    codes = data["cancellation_policy_code"]
+
+    # Create a boolean mask for the rows that match the cancellation policy format
+    mask = codes.apply(check_cancellation_policy)
+
+    # Apply the cancel_code_to_numeric function to the matching rows
+    for idx in codes.loc[mask].index:
+        staying_time = int(data.loc[idx, "duration_of_stay"])
+        codes.loc[idx] = cancel_code_to_numeric(codes.loc[idx], staying_time)
+
+    # Set the non-matching rows to 0
+    codes.loc[~mask] = 0
+
+    data["cancellation_policy_code"] = codes
     return data
 
 
