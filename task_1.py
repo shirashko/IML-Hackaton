@@ -133,29 +133,16 @@ def preprocess_data(X: pd.DataFrame, y: pd.Series):
     # inserting new features that quantify durations
     data = new_duration_features(data)
 
-    codes = data["cancellation_policy_code"]
-
-    # Create a boolean mask for the rows that match the cancellation policy format
-    mask = codes.apply(check_cancellation_policy)
-
-    # Apply the cancel_code_to_numeric function to the matching rows
-    for idx in codes.loc[mask].index:
-        staying_time = int(data.loc[idx, "duration_of_stay"])
-        codes.loc[idx] = cancel_code_to_numeric(codes.loc[idx], staying_time)
-
-    # Set the non-matching rows to 0
-    codes.loc[~mask] = 0
-
-    data["cancellation_policy_code"] = codes
+    # process feature
+    data = process_cancellation_policy_code(data)
 
     # delete features which are not informative (for some we extracted new features from first)
     data = remove_features(data)
 
     # convert from boolean to integer 0, 1
-    data[["is_user_logged_in", "is_first_booking"]] = data[["is_user_logged_in", "is_first_booking"]].astype(int)
+    data = convert_boolean_features_to_int(data)
 
-    dummy_variables = ['hotel_area_code', 'hotel_chain_code', "original_payment_method", "original_payment_type",
-                       "original_payment_currency", "customer_nationality", "accommadation_type_name", "charge_option"]
+    dummy_variables = ["original_payment_method", "original_payment_type", "accommadation_type_name", "charge_option"]
 
     # Handling missing values
     if y is not None:  # train
@@ -179,10 +166,31 @@ def preprocess_data(X: pd.DataFrame, y: pd.Series):
         return data
 
 
+def convert_boolean_features_to_int(data):
+    data[["is_user_logged_in", "is_first_booking"]] = data[["is_user_logged_in", "is_first_booking"]].astype(int)
+    return data
+
+
+def process_cancellation_policy_code(data):
+    # process cancellation_policy_code feature
+    codes = data["cancellation_policy_code"]
+    # Create a boolean mask for the rows that match the cancellation policy format
+    mask = codes.apply(check_cancellation_policy)
+    # Apply the cancel_code_to_numeric function to the matching rows
+    for idx in codes.loc[mask].index:
+        staying_time = int(data.loc[idx, "duration_of_stay"])
+        codes.loc[idx] = cancel_code_to_numeric(codes.loc[idx], staying_time)
+    # Set the non-matching rows to 0
+    codes.loc[~mask] = 0
+    data["cancellation_policy_code"] = codes
+    return data
+
+
 def remove_features(data):
     data = data.drop(["h_booking_id", "h_customer_id", "language", "hotel_id", "hotel_brand_code", "hotel_country_code",
-                      "hotel_city_code", "origin_country_code", "checkin_date", "checkout_date", "booking_datetime",
-                      "hotel_live_date", "guest_nationality_country_name"], axis=1)
+                      "origin_country_code", "checkin_date", "checkout_date", "booking_datetime",
+                      "hotel_live_date", "guest_nationality_country_name",     'hotel_area_code', 'hotel_chain_code',
+                      "original_payment_currency", "customer_nationality", 'hotel_city_code'], axis=1)
     return data
 
 
@@ -216,7 +224,7 @@ def preprocess_data_sets():
     x_val_processed = preprocess_data(x_val, None)
     y_val_processed = y_val.notna().astype(
         int)  # make response vector with 1 where there was a cancellation, 0 otherwise
-    return x_train_processed, y_train_processed, x_val_processed, y_val_processed,
+    return x_train_processed, y_train_processed, x_val_processed, y_val_processed
 
 
 if __name__ == '__main__':
